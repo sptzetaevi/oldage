@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Old Age - Smartphone</title>
+  <title>Old Age - Smartphone Audio Fix</title>
   <style>
     :root{
       --bg:#f4f6fb;
@@ -220,20 +220,36 @@
 
     <section id="audio">
       <h2>Registrazione audio e controllo lettura</h2>
-      <p>Scegli una frase, premi <strong>Registra</strong> e leggila ad alta voce. Il browser prova a trascrivere la tua voce e confronta il risultato con la frase corretta.</p>
+      <p>Scegli una frase e leggila ad alta voce. Questa versione registra davvero l’audio. Se il browser lo permette, prova anche a trascrivere la voce e a confrontarla con la frase corretta.</p>
+      <p class="small"><strong>Nota per smartphone:</strong> il microfono funziona meglio se la pagina è aperta da un sito HTTPS, per esempio GitHub Pages. Se apri il file direttamente dal telefono, alcuni browser bloccano il microfono.</p>
 
       <div class="audio-card">
         <label for="sentenceSelect"><strong>Scegli la frase da leggere:</strong></label>
         <select id="sentenceSelect"></select>
         <div id="selectedPron" class="pron"></div>
+
+        <h3>1. Registra la tua voce</h3>
         <div class="audio-buttons">
-          <button class="btn" onclick="startRecognition()">🎙️ Registra</button>
-          <button class="btn secondary" onclick="stopRecognition()">Stop</button>
+          <button class="btn" onclick="startAudioRecording()">🎙️ Inizia registrazione</button>
+          <button class="btn secondary" onclick="stopAudioRecording()">⏹️ Ferma</button>
           <button class="btn light" onclick="speakSentence()">🔊 Ascolta frase</button>
         </div>
-        <div id="audioStatus" class="feedback warn" style="display:block">Pronto.</div>
+        <div id="recordStatus" class="feedback warn" style="display:block">Pronto. Premi “Inizia registrazione”.</div>
+        <audio id="player" controls style="width:100%;margin-top:10px;display:none"></audio>
+        <a id="downloadAudio" class="btn light" style="display:none;text-align:center;margin-top:8px" download="lettura-old-age.webm">Scarica audio registrato</a>
+
+        <h3>2. Controllo automatico, se disponibile</h3>
+        <div class="audio-buttons">
+          <button class="btn" onclick="startRecognition()">🗣️ Avvia controllo voce</button>
+          <button class="btn secondary" onclick="stopRecognition()">Stop controllo</button>
+        </div>
+        <div id="audioStatus" class="feedback warn" style="display:block">Controllo vocale non ancora avviato.</div>
         <div id="audioResult" class="result">Trascrizione: -</div>
         <div id="audioScore" class="score"></div>
+
+        <h3>3. Soluzione alternativa</h3>
+        <p class="small">Se il microfono della pagina non parte, usa il registratore del telefono e carica qui il file audio.</p>
+        <input type="file" accept="audio/*" capture="microphone" onchange="loadExternalAudio(event)">
       </div>
     </section>
   </main>
@@ -296,6 +312,69 @@ function checkGaps(){
 function checkTrad(){
   const ok=document.getElementById('trad1').value==='a';
   setFb('tradFeedback', ok, ok?'Corretto!':'Non corretto. Rileggi la frase e prova ancora.');
+}
+
+let mediaRecorder;
+let recordedChunks = [];
+let audioStream;
+
+async function startAudioRecording(){
+  const status = document.getElementById('recordStatus');
+  const player = document.getElementById('player');
+  const download = document.getElementById('downloadAudio');
+  player.style.display='none';
+  download.style.display='none';
+  recordedChunks = [];
+
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    status.className='feedback bad';
+    status.textContent='Questo browser non permette la registrazione dalla pagina. Prova con Chrome/Android o pubblica il file su GitHub Pages.';
+    return;
+  }
+
+  try{
+    audioStream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    mediaRecorder = new MediaRecorder(audioStream);
+    mediaRecorder.ondataavailable = e => { if(e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      const url = URL.createObjectURL(blob);
+      player.src = url;
+      player.style.display='block';
+      download.href = url;
+      download.style.display='block';
+      status.className='feedback ok';
+      status.textContent='Registrazione completata. Puoi riascoltarla qui sotto.';
+      if(audioStream){ audioStream.getTracks().forEach(t=>t.stop()); }
+    };
+    mediaRecorder.start();
+    status.className='feedback warn';
+    status.textContent='Registrazione in corso... leggi la frase scelta.';
+  }catch(err){
+    status.className='feedback bad';
+    status.textContent='Microfono non disponibile o autorizzazione negata. Su smartphone prova ad aprire la pagina da HTTPS/GitHub Pages.';
+  }
+}
+
+function stopAudioRecording(){
+  const status = document.getElementById('recordStatus');
+  if(mediaRecorder && mediaRecorder.state !== 'inactive'){
+    mediaRecorder.stop();
+  }else{
+    status.className='feedback warn';
+    status.textContent='Non c’è una registrazione attiva.';
+  }
+}
+
+function loadExternalAudio(event){
+  const file = event.target.files && event.target.files[0];
+  if(!file) return;
+  const player = document.getElementById('player');
+  player.src = URL.createObjectURL(file);
+  player.style.display='block';
+  const status = document.getElementById('recordStatus');
+  status.className='feedback ok';
+  status.textContent='Audio caricato. Puoi ascoltarlo qui sotto.';
 }
 
 let recognition;
