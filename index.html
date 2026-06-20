@@ -220,7 +220,7 @@
 
     <section id="audio">
       <h2>Registrazione audio e controllo lettura</h2>
-      <p>Scegli una frase e leggila ad alta voce. Questa versione registra davvero l’audio. Se il browser lo permette, prova anche a trascrivere la voce e a confrontarla con la frase corretta.</p>
+      <p>Scegli una frase e leggila ad alta voce. Premi <strong>“Registra e confronta”</strong>: la pagina prova a registrare l’audio e, nello stesso momento, a trascrivere la voce per confrontarla con la frase corretta.</p>
       <p class="small"><strong>Nota per smartphone:</strong> il microfono funziona meglio se la pagina è aperta da un sito HTTPS, per esempio GitHub Pages. Se apri il file direttamente dal telefono, alcuni browser bloccano il microfono.</p>
 
       <div class="audio-card">
@@ -228,27 +228,26 @@
         <select id="sentenceSelect"></select>
         <div id="selectedPron" class="pron"></div>
 
-        <h3>1. Registra la tua voce</h3>
+        <h3>1. Registra e confronta</h3>
         <div class="audio-buttons">
-          <button class="btn" onclick="startAudioRecording()">🎙️ Inizia registrazione</button>
-          <button class="btn secondary" onclick="stopAudioRecording()">⏹️ Ferma</button>
+          <button class="btn" onclick="startRecordAndCompare()">🎙️ Registra e confronta</button>
+          <button class="btn secondary" onclick="stopAllAudio()">⏹️ Ferma</button>
           <button class="btn light" onclick="speakSentence()">🔊 Ascolta frase</button>
         </div>
-        <div id="recordStatus" class="feedback warn" style="display:block">Pronto. Premi “Inizia registrazione”.</div>
+        <div id="recordStatus" class="feedback warn" style="display:block">Pronto. Premi “Registra e confronta”.</div>
+        <div id="audioStatus" class="feedback warn" style="display:block">Controllo vocale non ancora avviato.</div>
         <audio id="player" controls style="width:100%;margin-top:10px;display:none"></audio>
         <a id="downloadAudio" class="btn light" style="display:none;text-align:center;margin-top:8px" download="lettura-old-age.webm">Scarica audio registrato</a>
-
-        <h3>2. Controllo automatico, se disponibile</h3>
-        <div class="audio-buttons">
-          <button class="btn" onclick="startRecognition()">🗣️ Avvia controllo voce</button>
-          <button class="btn secondary" onclick="stopRecognition()">Stop controllo</button>
-        </div>
-        <div id="audioStatus" class="feedback warn" style="display:block">Controllo vocale non ancora avviato.</div>
         <div id="audioResult" class="result">Trascrizione: -</div>
         <div id="audioScore" class="score"></div>
 
+        <h3>2. Controllo manuale di emergenza</h3>
+        <p class="small">Se il telefono registra ma non trascrive, scrivi qui sotto ciò che l’alunno ha letto oppure usa la dettatura della tastiera del telefono. Poi premi “Confronta testo”.</p>
+        <textarea id="manualTranscript" rows="3" placeholder="Scrivi qui la frase letta o dettata dal telefono"></textarea>
+        <button class="btn light" onclick="compareManualText()">Confronta testo</button>
+
         <h3>3. Soluzione alternativa</h3>
-        <p class="small">Se il microfono della pagina non parte, usa il registratore del telefono e carica qui il file audio.</p>
+        <p class="small">Se il microfono della pagina non parte, usa il registratore del telefono e carica qui il file audio. Nota: un file audio caricato può essere riascoltato, ma non sempre può essere trascritto automaticamente dal browser.</p>
         <input type="file" accept="audio/*" capture="microphone" onchange="loadExternalAudio(event)">
       </div>
     </section>
@@ -378,42 +377,113 @@ function loadExternalAudio(event){
 }
 
 let recognition;
+let lastTranscript = '';
+
 function similarity(a,b){
-  a=clean(a).split(' ').filter(Boolean); b=clean(b).split(' ').filter(Boolean);
+  a=clean(a).split(' ').filter(Boolean);
+  b=clean(b).split(' ').filter(Boolean);
   if(!b.length) return 0;
   let matches=0;
   const used=new Set();
-  a.forEach(w=>{ const idx=b.findIndex((x,i)=>!used.has(i)&&x===w); if(idx>=0){matches++; used.add(idx);} });
+  a.forEach(w=>{
+    const idx=b.findIndex((x,i)=>!used.has(i)&&x===w);
+    if(idx>=0){matches++; used.add(idx);}
+  });
   return Math.round((matches / b.length) * 100);
 }
-function startRecognition(){
+
+function showComparison(transcript){
+  const expected = data[sentenceSelect.value][0];
+  const score = similarity(transcript, expected);
+  document.getElementById('audioResult').textContent = `Frase attesa: ${expected}
+Trascrizione: ${transcript || '-'}`;
+  document.getElementById('audioScore').textContent = `Somiglianza: ${score}%`;
+  const status=document.getElementById('audioStatus');
+  status.style.display='block';
+  status.className='feedback ' + (score>=70?'ok': score>=45?'warn':'bad');
+  status.textContent = score>=70 ? 'Buona lettura!' : score>=45 ? 'Lettura parziale. Prova ancora lentamente.' : 'La frase non è stata riconosciuta bene. Riprova oppure usa il controllo manuale.';
+}
+
+async function startRecordAndCompare(){
+  lastTranscript='';
+  document.getElementById('audioResult').textContent='Trascrizione: -';
+  document.getElementById('audioScore').textContent='';
+
+  // 1) Avvia registrazione reale dell'audio
+  startAudioRecording();
+
+  // 2) Avvia anche il riconoscimento vocale, se il browser lo supporta
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const status=document.getElementById('audioStatus');
   if(!SpeechRecognition){
-    status.className='feedback bad'; status.style.display='block';
-    status.textContent='Il riconoscimento vocale non è supportato da questo browser. Prova con Google Chrome.';
+    status.className='feedback bad';
+    status.style.display='block';
+    status.textContent='Il browser registra l’audio, ma non supporta il confronto automatico. Usa Chrome/Android oppure il controllo manuale qui sotto.';
     return;
   }
-  recognition = new SpeechRecognition();
-  recognition.lang = 'en-US';
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
-  status.className='feedback warn'; status.style.display='block'; status.textContent='Sto ascoltando... leggi la frase in inglese.';
-  recognition.start();
-  recognition.onresult = (event)=>{
-    const transcript = event.results[0][0].transcript;
-    const expected = data[sentenceSelect.value][0];
-    const score = similarity(transcript, expected);
-    document.getElementById('audioResult').textContent = `Frase attesa: ${expected}\nTrascrizione: ${transcript}`;
-    document.getElementById('audioScore').textContent = `Somiglianza: ${score}%`;
-    status.className='feedback ' + (score>=70?'ok': score>=45?'warn':'bad');
-    status.textContent = score>=70 ? 'Buona lettura!' : score>=45 ? 'Lettura parziale. Prova ancora.' : 'La frase non è stata riconosciuta bene. Riprova lentamente.';
-  };
-  recognition.onerror = (event)=>{
-    status.className='feedback bad'; status.textContent='Errore: ' + event.error + '. Controlla il microfono.';
-  };
+
+  try{
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = ()=>{
+      status.className='feedback warn';
+      status.style.display='block';
+      status.textContent='Sto ascoltando e confrontando... leggi la frase in inglese.';
+    };
+
+    recognition.onresult = (event)=>{
+      let transcript='';
+      for(let i=event.resultIndex; i<event.results.length; i++){
+        transcript += event.results[i][0].transcript + ' ';
+      }
+      lastTranscript = transcript.trim();
+      document.getElementById('audioResult').textContent = 'Trascrizione provvisoria: ' + lastTranscript;
+      if(event.results[event.results.length-1].isFinal){ showComparison(lastTranscript); }
+    };
+
+    recognition.onend = ()=>{
+      if(lastTranscript){ showComparison(lastTranscript); }
+      else{
+        status.className='feedback bad';
+        status.textContent='Audio registrato, ma il browser non ha prodotto una trascrizione. Prova a parlare più lentamente o usa il controllo manuale.';
+      }
+    };
+
+    recognition.onerror = (event)=>{
+      status.className='feedback bad';
+      status.textContent='Audio registrato, ma confronto automatico non riuscito: ' + event.error + '. Usa il controllo manuale.';
+    };
+
+    recognition.start();
+  }catch(e){
+    status.className='feedback bad';
+    status.textContent='Audio registrato, ma il confronto automatico non è partito. Usa il controllo manuale.';
+  }
 }
-function stopRecognition(){ if(recognition){ recognition.stop(); document.getElementById('audioStatus').textContent='Registrazione fermata.'; } }
+
+function stopAllAudio(){
+  stopAudioRecording();
+  if(recognition){ try{ recognition.stop(); }catch(e){} }
+}
+
+function compareManualText(){
+  const text=document.getElementById('manualTranscript').value;
+  if(!text.trim()){
+    const status=document.getElementById('audioStatus');
+    status.className='feedback warn';
+    status.textContent='Scrivi prima una trascrizione manuale.';
+    return;
+  }
+  showComparison(text);
+}
+
+// Vecchi pulsanti: lasciati disponibili nel codice per compatibilità
+function startRecognition(){ startRecordAndCompare(); }
+function stopRecognition(){ stopAllAudio(); }
 function speakSentence(){
   if(!('speechSynthesis' in window)) return;
   const utter = new SpeechSynthesisUtterance(data[sentenceSelect.value][0]);
